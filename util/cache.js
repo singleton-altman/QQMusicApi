@@ -28,7 +28,7 @@ class Cache {
 
   set(key, value, time = 90) {
     this.clear();
-    const timeKye = moment().add(time, 'minutes').format('YYMMDDHHmm');
+    const timeKye = moment().add(time, 'minutes').format('YYYYMMDDHHmm');
     this.map[key] = value;
     this.timeMap[timeKye] = this.timeMap[timeKye] || [];
     this.timeMap[timeKye].push(key);

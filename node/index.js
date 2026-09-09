@@ -1,6 +1,7 @@
 const routes = require('./routes');
 const Cache = require('../util/cache');
 const Request = require('../util/request');
+const scopedCache = require('../util/scopedCache');
 
 const cache = new Cache();
 
@@ -71,7 +72,7 @@ class QQMusic {
           req,
           res,
           request: Request(req, res),
-          cache,
+          cache: scopedCache(cache, req.cookies),
           globalCookie: {
             userCookie: () => this.cookie,
           }

@@ -1,4 +1,3 @@
-const jsonFile = require('jsonfile');
 const getSign = require('../util/sign');
 
 const user = {
@@ -57,58 +56,9 @@ const user = {
     })
   },
 
-  '/getCookie': ({req, res, globalCookie}) => {
-    const {id} = req.query;
-    if (!id) {
-      return res.send({
-        result: 500,
-        errMsg: 'id ?'
-      });
-    }
+  '/getCookie': ({res}) => res.status(410).send({result: 410, errMsg: '旧 Cookie 仓接口已停用，请使用受保护的扫码登录接口'}),
 
-    const cookieObj = globalCookie.allCookies()[id] || {};
-    Object.keys(cookieObj).forEach((k) => {
-      // 有些过大的cookie 对登录校验无用，但是会导致报错
-      if (cookieObj[k].length < 255) {
-        res.cookie(k, cookieObj[k], {expires: new Date(Date.now() + 86400000)});
-      }
-    });
-    return res.send({
-      result: 100,
-      message: '设置 cookie 成功',
-    })
-  },
-
-  '/setCookie': ({req, res, globalCookie}) => {
-    const {data} = req.body;
-    const allCookies = globalCookie.allCookies();
-    const userCookie = {};
-    data.split('; ').forEach((c) => {
-      const arr = c.split('=');
-      userCookie[arr[0]] = arr[1];
-    });
-
-    if (Number(userCookie.login_type) === 2) {
-      userCookie.uin = userCookie.wxuin;
-    }
-    userCookie.uin = (userCookie.uin || '').replace(/\D/g, '');
-    allCookies[userCookie.uin] = userCookie;
-    jsonFile.writeFile('data/allCookies.json', allCookies);
-
-    // 这里写死我的企鹅号，作为存在服务器上的cookie
-    if (String(userCookie.uin) === String(global.QQ)) {
-      globalCookie.updateUserCookie(userCookie);
-      jsonFile.writeFile('data/cookie.json', userCookie);
-    }
-    res.set('Access-Control-Allow-Origin', 'https://y.qq.com');
-    res.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.set('Access-Control-Allow-Credentials', 'true');
-    res.send({
-      result: 100,
-      data: '操作成功',
-    })
-  },
+  '/setCookie': ({res}) => res.status(410).send({result: 410, errMsg: '旧 Cookie 仓接口已停用，请使用受保护的扫码登录接口'}),
 
   // 获取用户歌单
   '/detail': async ({req, res, request}) => {

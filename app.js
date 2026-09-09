@@ -11,6 +11,8 @@ const Cache = require('./util/cache');
 const config = require('./bin/config');
 const Request = require('./util/request');
 const GlobalCookie = require('./util/globalCookie');
+const scopedCache = require('./util/scopedCache');
+const {createLoginRouter} = require('./util/login/router');
 
 const app = express();
 const dataHandle = new DataStatistics();
@@ -26,6 +28,8 @@ config.useDataStatistics && setInterval(() => dataHandle.saveInfo(), 60000 * 10)
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'jade');
 
+// Login routes own parsing, authentication and errors; sensitive URLs never enter morgan.
+app.use('/login', createLoginRouter());
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({extended: false}));
@@ -34,9 +38,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 config.useDataStatistics && app.use((req, res, next) => dataHandle.record(req, res, next));
 
-const corsMap = {
-  '/user/setCookie': true,
-}
+const corsMap = {};
 fs.readdirSync(path.join(__dirname, 'routes')).forEach(file => {
   const filename = file.replace(/\.js$/, '');
   const RouterMap = require(`./routes/${filename}`);
@@ -58,9 +60,9 @@ fs.readdirSync(path.join(__dirname, 'routes')).forEach(file => {
       req.cookies.uin = uin.replace(/\D/g, '');
       const func = RouterMap[path];
 
-      const args = {request, dataStatistics: dataHandle, feedback, cache, globalCookie};
-      router.post('/', (req, res) => func({req, res, ...args}));
-      router.get('/', (req, res) => func({req, res, ...args}));
+      const args = {request, dataStatistics: dataHandle, feedback, cache: scopedCache(cache, req.cookies), globalCookie};
+      router.post('/', (req, res, next) => Promise.resolve().then(() => func({req, res, ...args})).catch(next));
+      router.get('/', (req, res, next) => Promise.resolve().then(() => func({req, res, ...args})).catch(next));
       if (corsMap[`/${filename}${path}`]) {
         router.options('/', (req, res) => {
           res.set('Access-Control-Allow-Origin', 'https://y.qq.com');
@@ -88,6 +90,7 @@ app.use(function (req, res, next) {
 
 // error handler
 app.use(function (err, req, res, next) {
+  if (res.headersSent) return next(err);
   // set locals, only providing error in development
   res.locals.message = err.message;
   res.locals.error = req.app.get('env') === 'development' ? err : {};

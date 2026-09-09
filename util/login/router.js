@@ -30,13 +30,14 @@ function createLoginRouter({sessions = new LoginSessions(), secret = () => proce
   });
   router.use(express.json({limit: '2kb'}));
   for (const [path, needsKey, action] of [
-    ['/qr/create', false, body => sessions.create(body.owner)],
+    ['/qr/create', false, body => sessions.create(body.owner, body.loginType)],
     ['/qr/status', true, body => sessions.status(body.owner, body.unikey)],
     ['/qr/cancel', true, body => sessions.cancel(body.owner, body.unikey)],
   ]) {
     router.post(path, async (req, res) => {
       const body = req.body;
       if (!body || typeof body.owner !== 'string' || !/^[a-f0-9]{64}$/.test(body.owner) ||
+          (!needsKey && body.loginType !== undefined && !['qq', 'wechat'].includes(body.loginType)) ||
           (needsKey && (typeof body.unikey !== 'string' || !/^[a-f0-9]{64}$/.test(body.unikey)))) {
         return res.status(400).json({result: 400, errMsg: '无效的登录会话参数'});
       }

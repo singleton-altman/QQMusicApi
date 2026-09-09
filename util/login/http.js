@@ -7,6 +7,8 @@ const ALLOWED_HOSTS = new Set([
   'graph.qq.com',
   'y.qq.com',
   'u.y.qq.com',
+  'open.weixin.qq.com',
+  'lp.open.weixin.qq.com',
 ]);
 
 class LoginError extends Error {
@@ -85,10 +87,10 @@ class LoginHttpClient {
     this.timeoutMs = timeoutMs;
   }
 
-  async request(value, {jar, signal, method = 'GET', body, headers = {}, cookie} = {}) {
+  async request(value, {jar, signal, method = 'GET', body, headers = {}, cookie, timeoutMs = this.timeoutMs} = {}) {
     const url = allowedUrl(value);
-    const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) :
-      AbortSignal.timeout(this.timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) :
+      AbortSignal.timeout(timeoutMs);
     try {
       const cookieHeader = cookie === undefined ? jar?.header(url) : cookie;
       const response = await this.fetchImpl(url.toString(), {
@@ -116,7 +118,7 @@ class LoginHttpClient {
     } catch (err) {
       if (err instanceof LoginError) throw err;
       // Never retain an upstream URL, body, token, or nested fetch error.
-      throw new LoginError(signal?.aborted ? 'cancelled' : 'network');
+      throw new LoginError(signal?.aborted ? 'cancelled' : combined.aborted ? 'timeout' : 'network');
     }
   }
 }

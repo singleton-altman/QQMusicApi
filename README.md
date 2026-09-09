@@ -1,8 +1,8 @@
 # QQMusicApi
 
-## Musix fork：手机 QQ 扫码登录
+## Musix fork：QQ / 微信扫码登录
 
-此 fork 保留原业务 API，新增服务间扫码登录接口。运行环境为 **Node.js 22 或更新版本**（使用 `npm ci` 和 `package-lock.json`；已移除引用失效镜像的旧 Yarn 锁文件），登录模块使用内建 `fetch`，没有新增运行时依赖。仅支持 **手机 QQ** 扫码，微信和 QQ 音乐 App 扫码尚未实现。
+此 fork 保留原业务 API，新增服务间扫码登录接口。运行环境为 **Node.js 22 或更新版本**（使用 `npm ci` 和 `package-lock.json`；已移除引用失效镜像的旧 Yarn 锁文件），登录模块使用内建 `fetch`，没有新增运行时依赖。支持**手机 QQ 和微信**扫码登录 QQ 音乐；QQ 音乐 App 扫码尚未实现。
 
 在 QQMusicApi 服务和 Musix 后端配置相同的 `QQMUSIC_LOGIN_SECRET`（至少 32 个字符）。该值只能保存在服务端。未配置或过短时登录接口返回 HTTP 503；鉴权失败返回 401。建议通过容器私网连接服务，公网部署时使用 HTTPS，并限制登录接口仅由应用后端访问。
 
@@ -10,7 +10,7 @@
 
 | 路径 | JSON 请求体 | `result: 100` 的 `data` |
 | --- | --- | --- |
-| `/login/qr/create` | `{ "owner": "64 位小写十六进制值" }` | `unikey`（随机 64 位 hex）、`qrimg`（PNG data URL）、`expiresAt`（毫秒时间戳）、`message` |
+| `/login/qr/create` | `{ "owner": "64 位小写十六进制值", "loginType": "qq 或 wechat，默认 qq" }` | `loginType`、`unikey`（随机 64 位 hex）、`qrimg`（PNG/JPEG data URL）、`expiresAt`（毫秒时间戳）、`message` |
 | `/login/qr/status` | `{ "owner": "同上", "unikey": "创建时返回的值" }` | `done`、`status`、`message`、`retryAfterMs: 1500`，终止时增加 `expired` 或 `cancelled` |
 | `/login/qr/cancel` | `{ "owner": "同上", "unikey": "创建时返回的值" }` | `cancelled: true`；重复取消幂等 |
 
@@ -18,19 +18,21 @@
 
 状态包括 `waiting`（待扫码）、`scanned`（待手机确认或正在验证音乐凭据）、`authorized`、`expired`、`cancelled`、`error`。`error` 同时返回 `expired: true`，提示重新扫码。
 
-仅在 **QQ 扫码确认 → 固定 check_sig → OAuth code → QQLogin → GetLoginUserInfo 验证成功** 后返回 `done: true`，成功数据额外包含：
+QQ 方式为 **QQ 扫码确认 → 固定 check_sig → OAuth code → QQLogin → GetLoginUserInfo**；微信方式为 **微信 qrconnect → 扫码确认返回 code → music.login.LoginServer.Login → GetLoginUserInfo**。验证成功后返回 `done: true`，成功数据额外包含：
 
 ```json
 {
   "done": true,
   "status": "authorized",
+  "loginType": "qq",
   "uin": "字符串形式的音乐账号 ID",
   "cookie": "uin=<musicid>; qqmusic_uin=<musicid>; qqmusic_key=<musickey>; qm_keyst=<musickey>; login_type=1",
   "credentials": {
     "musicid": "字符串形式的音乐账号 ID",
     "str_musicid": "字符串形式的音乐账号 ID",
     "musickey": "音乐访问凭据",
-    "login_type": 1
+    "login_type": 1,
+    "loginType": 2
   },
   "message": "QQ 音乐登录成功",
   "retryAfterMs": 1500
@@ -51,7 +53,9 @@
 npm run test:login
 ```
 
-测试覆盖完整协议链、状态映射、无效凭据、账号隔离、重复轮询、取消/过期竞态、HTTP 鉴权及错误脱敏；HTTP 测试需允许本机 loopback 监听。真实扫码授权仍需使用者在手机 QQ 确认，并验证实际账号的登录态与音乐接口。
+微信凭据使用 Cookie `login_type=2` 与 `wxuin`（等于字符串 musicid），音乐 CGI 使用 `tmeLoginType=1`。QQ 则分别为 1 和 2；凭据 JSON 的 `loginType` 保存 CGI 编号。不能将两种编号混用。微信长轮询最多等待 18 秒，超时保留等待状态；应用后端的状态调用超时建议至少 45 秒。
+
+测试覆盖 QQ 与微信完整协议链、状态映射、无效凭据、账号隔离、重复轮询、取消/过期竞态、HTTP 鉴权及错误脱敏；HTTP 测试需允许本机 loopback 监听。真实扫码授权仍需使用者在对应的手机应用中确认，并验证实际账号的登录态与音乐接口。
 
 协议实现参考 [L-1124/QQMusicApi](https://github.com/L-1124/QQMusicApi/tree/374017047c39dc987418450b6d513bc216499a69) 的 `qqmusic_api/modules/login.py` 与 `core/versioning.py`（GPL-3.0）。本 fork 延续原项目 GPLv3 许可，保留源代码及来源说明。
 

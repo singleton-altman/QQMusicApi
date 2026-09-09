@@ -36,6 +36,8 @@ test('HTTP routes enforce Bearer, POST, body-only identifiers, owner/token forma
     ['/qr/create?owner=secret-in-query', {}, 400],
     ['/qr/create', {body: {owner: '123'}}, 400],
     ['/qr/create', {body: {owner: {foo: OWNER}}}, 400],
+    ['/qr/create', {body: {owner: OWNER, loginType: 'wx'}}, 400],
+    ['/qr/create', {body: {owner: OWNER, loginType: null}}, 400],
     ['/qr/status', {body: {owner: OWNER, unikey: 'not-a-session'}}, 400],
     ['/qr/create', {raw: '{"cookie":"secret",'}, 400],
     ['/qr/create', {raw: JSON.stringify({owner: OWNER, tooLarge: 'x'.repeat(3000)})}, 400],

@@ -59,13 +59,15 @@ function parseExactJson(body) {
   } catch { throw new LoginError(); }
 }
 
-function normalizeCredentials(data) {
+function normalizeCredentials(data, loginType = 'qq') {
   if (!data || typeof data !== 'object') throw new LoginError();
   const musicid = String(data.str_musicid || data.musicid || '');
   const musickey = data.musickey;
   if (!/^[1-9]\d{0,24}$/.test(musicid) || typeof musickey !== 'string' ||
       !/^[\x21-\x7E]{1,2048}$/.test(musickey) || /[;,]/.test(musickey)) throw new LoginError();
-  const credentials = {musicid, str_musicid: musicid, musickey, login_type: 1};
+  // Web cookie login_type and native CGI loginType have opposite numbering.
+  const wechat = loginType === 'wechat';
+  const credentials = {musicid, str_musicid: musicid, musickey, login_type: wechat ? 2 : 1, loginType: wechat ? 1 : 2};
   for (const key of ['openid', 'unionid', 'refresh_key', 'refresh_token', 'access_token', 'encryptUin']) {
     if (typeof data[key] === 'string' && data[key].length <= 4096) credentials[key] = data[key];
   }
@@ -76,17 +78,18 @@ function normalizeCredentials(data) {
 }
 
 function musicCookie(credentials) {
-  return `uin=${credentials.musicid}; qqmusic_uin=${credentials.musicid}; qqmusic_key=${credentials.musickey}; qm_keyst=${credentials.musickey}; login_type=1`;
+  const wechat = credentials.login_type === 2;
+  return `uin=${credentials.musicid}; ${wechat ? `wxuin=${credentials.musicid}; ` : ''}qqmusic_uin=${credentials.musicid}; qqmusic_key=${credentials.musickey}; qm_keyst=${credentials.musickey}; login_type=${wechat ? 2 : 1}`;
 }
 
-function webComm(credentials) {
+function webComm(credentials, loginType = 'qq') {
   const gtk = hash33(credentials?.musickey || '', 5381);
   return {
     ct: 24, cv: 4747474, platform: 'yqq.json', chid: '0',
     uin: credentials?.musicid || '0', g_tk: gtk, g_tk_new_20200303: gtk,
     format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', notice: 0, need_new_code: 1,
     // QQConnect uses 2 for QQ; the web cookie's login_type uses 1 for QQ.
-    tmeLoginType: 2,
+    tmeLoginType: loginType === 'wechat' ? 1 : 2,
     ...(credentials ? {authst: credentials.musickey} : {}),
   };
 }
@@ -181,7 +184,7 @@ class QQLoginProtocol {
       // Ordinary QQ OAuth cookies never cross into the music service.
       cookie: credentials ? musicCookie(credentials) : '',
       headers: {'Content-Type': 'application/json', Origin: 'https://y.qq.com'},
-      body: JSON.stringify({comm: webComm(credentials), req_0: {module, method, param}}),
+      body: JSON.stringify({comm: webComm(credentials, session.loginType), req_0: {module, method, param}}),
     });
     const result = parseExactJson(response.body);
     if (!result || (result.code !== undefined && result.code !== 0) ||
@@ -198,7 +201,7 @@ class QQLoginProtocol {
     if (!Object.keys(info).length) throw new LoginError('authentication');
     const returnedId = info.str_musicid || info.musicid || info.userInfo?.musicid;
     if (returnedId && String(returnedId) !== credentials.musicid) throw new LoginError('authentication');
-    return {status: 'authorized', done: true, uin: credentials.musicid,
+    return {status: 'authorized', done: true, uin: credentials.musicid, loginType: session.loginType || 'qq',
       message: 'QQ 音乐登录成功', cookie: musicCookie(credentials), credentials};
   }
 }

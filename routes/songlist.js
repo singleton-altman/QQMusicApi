@@ -1,4 +1,6 @@
 const StringHelper = require('../util/StringHelper');
+const getSign = require('../util/sign');
+const {webComm} = require('../util/login/protocol');
 
 // 歌单写操作走新版 musicu.fcg：旧版 fcg_music_add2songdir / fcg_music_delbatchsong CGI
 // 已被 QQ 关闭（返回 403 no permit）。鉴权与 vkey 路由同一套 comm.authst(qqmusic_key)。
@@ -23,6 +25,41 @@ const musicuRequest = (request, req, payload) => request({
     origin: 'https://y.qq.com',
   },
 });
+
+// AddSonglist 只接受客户端形态的鉴权（网页版 comm 返回 code 80105），因此写操作
+// 走带签名的 musics.fcg，与 /user/refresh 同一通道；comm 需带 qq 与 tmeLoginType。
+const appComm = (cookies) => ({
+  ct: 11,
+  cv: 13020508,
+  v: 13020508,
+  tmeAppID: 'qqmusic',
+  format: 'json',
+  inCharset: 'utf-8',
+  outCharset: 'utf-8',
+  uin: cookies.uin || '0',
+  qq: cookies.uin || '0',
+  authst: cookies.qqmusic_key || cookies.qm_keyst || '',
+  tmeLoginType: Number(cookies.login_type) === 2 ? 1 : 2,
+});
+
+const musicsRequest = (request, req, payload) => {
+  const body = { comm: appComm(req.cookies), ...payload };
+  return request({
+    url: `https://u.y.qq.com/cgi-bin/musics.fcg?sign=${getSign(body)}&format=json&inCharset=utf8&outCharset=utf-8`,
+    data: {
+      data: JSON.stringify(body),
+    },
+    headers: {
+      referer: 'https://y.qq.com/',
+      origin: 'https://y.qq.com',
+    },
+  });
+};
+
+const webWriteComm = (cookies) => webComm(
+  { musicid: cookies.uin || '0', musickey: cookies.qqmusic_key || cookies.qm_keyst || '' },
+  Number(cookies.login_type) === 2 ? 'wechat' : 'qq',
+);
 
 // PlaylistDetailWrite 只认数字 songId；兼容传入 mid 或数字 id。
 const resolveSongIds = async (request, req, { mid, id }) => {
@@ -62,6 +99,7 @@ const sendWriteResult = (res, response, action) => {
     });
   }
   const msg = response.req_1?.msg || response.msg || response.errMsg || `code ${inner || code}`;
+  const detail = response.fallbackCode !== undefined ? `${msg} / web ${response.fallbackCode}` : msg;
   if (code === 1000 || inner === 1000 || /登录|login/i.test(String(msg))) {
     return res.send({
       result: 301,
@@ -70,7 +108,7 @@ const sendWriteResult = (res, response, action) => {
   }
   return res.send({
     result: 200,
-    errMsg: `${action}出错: ${msg}`,
+    errMsg: `${action}出错: ${detail}`,
   });
 };
 
@@ -98,8 +136,7 @@ const songlistWrite = (method, action) => async ({req, res, request}) => {
       errMsg: '无法解析歌曲编号',
     });
   }
-  const response = await musicuRequest(request, req, {
-    comm: musicuComm(req.cookies),
+  const payload = {
     req_1: {
       module: 'music.musicasset.PlaylistDetailWrite',
       method,
@@ -108,7 +145,16 @@ const songlistWrite = (method, action) => async ({req, res, request}) => {
         v_songInfo: songIds.map((songId) => ({ songType: 0, songId })),
       },
     },
-  });
+  };
+  let response = await musicsRequest(request, req, payload);
+  if (!response) return;
+  if (Number(response.req_1 && response.req_1.code) !== 0) {
+    // 兜底再试网页版 comm；两个错误码一起带回，便于定位是鉴权还是歌曲限制。
+    const fallback = await musicuRequest(request, req, { comm: webWriteComm(req.cookies), ...payload });
+    if (!fallback) return;
+    if (Number(fallback.req_1 && fallback.req_1.code) === 0) response = fallback;
+    else response = { ...response, fallbackCode: fallback.req_1 ? fallback.req_1.code : fallback.code };
+  }
   return sendWriteResult(res, response, action);
 };
 

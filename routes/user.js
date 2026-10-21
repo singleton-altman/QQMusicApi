@@ -9,25 +9,25 @@ const user = {
   },
 
   '/refresh': async ({req, res, request}) => {
-    const {uin, qm_keyst, qqmusic_key} = req.cookies
-    if (!uin || !(qm_keyst || qqmusic_key)) {
+    const {uin, qm_keyst, qqmusic_key, wxuin, login_type} = req.cookies
+    const musicid = uin || wxuin
+    const musickey = qm_keyst || qqmusic_key
+    if (!musicid || !musickey) {
       return res.send({
         result: 301,
         errMsg: '未登陆'
       })
     }
+    // musickey 闲置约 15 天过期，QQ 客户端靠持续换发保持登录；这里用当前
+    // key 向 QQConnectLogin 重新换发，把会话拉回 90 天窗口。
     const data = {
       req1: {
         module: "QQConnectLogin.LoginServer",
         method: "QQLogin",
         param: {
           expired_in: 7776000, //不用管
-          // onlyNeedAccessToken: 0, //不用管
-          // forceRefreshToken: 0, //不用管
-          // access_token: "6B0C62126368CA1ACE16C932C679747E", //access_token
-          // refresh_token: "25BACF1650EE2592D06BCC19EEAD7AD6", //refresh_token
-          musicid: uin, //uin或者web_uin 微信没试过
-          musickey: qm_keyst || qqmusic_key, //key
+          musicid: musicid, //uin或者web_uin 微信没试过
+          musickey: musickey, //key
         },
       },
     };
@@ -38,17 +38,28 @@ const user = {
 
     const result = await request({url})
 
-    if (result.req1 && result.req1.data && result.req1.data.musickey) {
+    if (result && result.req1 && result.req1.data && result.req1.data.musickey) {
       const musicKey = result.req1.data.musickey;
-      ['qm_keyst', 'qqmusic_key'].forEach((k) => {
+      const wechat = Number(login_type) === 2
+      const cookie = `uin=${musicid}; ${wechat ? `wxuin=${musicid}; ` : ''}qqmusic_uin=${musicid}; qqmusic_key=${musicKey}; qm_keyst=${musicKey}; login_type=${wechat ? 2 : 1}`
+      const browserCookies = ['qm_keyst', 'qqmusic_key']
+      browserCookies.forEach((k) => {
         res.cookie(k, musicKey, {expires: new Date(Date.now() + 86400000)})
       })
+      // 服务端调用方（ownCookie）需要完整的新 Cookie 才能持久化续期结果。
       return res.send({
         result: 100,
         data: {
-          musickey: result.req1.data.musickey,
+          musickey: musicKey,
+          cookie: cookie,
         }
       });
+    }
+    if (result && (Number(result.code) === 1000 || Number(result.req1 && result.req1.code) === 1000)) {
+      return res.send({
+        result: 301,
+        errMsg: '登录已过期，请重新扫码绑定'
+      })
     }
     return res.send({
       result: 200,

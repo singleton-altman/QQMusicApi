@@ -1,6 +1,6 @@
 const StringHelper = require('../util/StringHelper');
 const getSign = require('../util/sign');
-const {webComm} = require('../util/login/protocol');
+const {webComm, hash33} = require('../util/login/protocol');
 
 // 歌单写操作走新版 musicu.fcg：旧版 fcg_music_add2songdir / fcg_music_delbatchsong CGI
 // 已被 QQ 关闭（返回 403 no permit）。鉴权与 vkey 路由同一套 comm.authst(qqmusic_key)。
@@ -300,7 +300,8 @@ module.exports = {
   // 走新版 musicu.fcg PlaylistDetailWrite.DelSonglist；接受 mid 或数字 id，支持逗号批量。
   '/remove': songlistWrite('DelSonglist', '删除'),
 
-  // 新建歌单 强制使用传过来的cookie
+  // 新建歌单 强制使用传过来的cookie。旧 CGI 仍可用，但 g_tk 必须由当前 key 计算，
+  // 固定 5381 会被拒绝。
   '/create': async ({req, res, request}) => {
     req.query.ownCookie = 1;
     const {name} = req.query;
@@ -310,8 +311,9 @@ module.exports = {
         errMsg: 'name ? '
       })
     }
+    const gtk = hash33(req.cookies.qqmusic_key || req.cookies.qm_keyst || '', 5381);
     const result = await request({
-      url: 'https://c.y.qq.com/splcloud/fcgi-bin/create_playlist.fcg?g_tk=5381',
+      url: `https://c.y.qq.com/splcloud/fcgi-bin/create_playlist.fcg?g_tk=${gtk}`,
       method: 'post',
       data: StringHelper.changeUrlQuery({
         loginUin: req.cookies.uin,
@@ -322,7 +324,7 @@ module.exports = {
         notice: 0,
         platform: 'yqq',
         needNewCode: 0,
-        g_tk: 5381,
+        g_tk: gtk,
         uin: req.cookies.uin,
         name,
         show: 1,
@@ -361,7 +363,8 @@ module.exports = {
     }
   },
 
-  // 删除歌单 强制使用传过来的Cookie
+  // 删除歌单 强制使用传过来的Cookie。旧 fcg_fav_modsongdir CGI 对扫码凭据报
+  // gtk param error，改走客户端协议 PlaylistBaseWrite.DelPlaylist。
   '/delete': async ({req, res, request}) => {
     req.query.ownCookie = 1;
     const {dirid} = req.query;
@@ -371,51 +374,14 @@ module.exports = {
         errMsg: 'dirid ?',
       })
     }
-    let result = await request({
-      url: 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_fav_modsongdir.fcg?g_tk=5381',
-      method: 'post',
-      data: StringHelper.changeUrlQuery({
-        loginUin: req.cookies.uin,
-        hostUin: 0,
-        format: 'fs',
-        inCharset: 'GB2312',
-        outCharset: 'gb2312',
-        notice: 0,
-        platform: 'yqq',
-        needNewCode: 0,
-        g_tk: 5381,
-        uin: req.cookies.uin,
-        delnum: 1,
-        deldirids: dirid,
-        forcedel: 1,
-        formsender: 1,
-        source: 103,
-      }, '?').slice(1),
-      headers: {
-        Referer: 'https://y.qq.com/n/yqq/playlist',
+    const response = await musicsRequest(request, req, {
+      req_1: {
+        module: 'music.musicasset.PlaylistBaseWrite',
+        method: 'DelPlaylist',
+        param: { dirId: Number(dirid) },
       },
-    }, {
-      dataType: 'raw',
     });
-    result = JSON.parse(result.replace(/(^.+\()|(\).+$)/g, ''));
-
-    switch (Number(result.code)) {
-      case 0:
-        return res.send({
-          message: '删除成功',
-          result: 100,
-        });
-      case 1:
-        return res.send({
-          result: 301,
-          errMsg: '先登录！'
-        });
-      default:
-        return res.send({
-          result: 200,
-          errMsg: `删除出错: ${result.msg}`,
-        })
-    }
+    return sendWriteResult(res, response, '删除');
   },
 
   // 收藏歌单 强制使用传过来的Cookie

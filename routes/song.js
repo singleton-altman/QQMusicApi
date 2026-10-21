@@ -2,7 +2,7 @@ const search = require('./search');
 
 const song = {
   '/': async ({req, res, request}) => {
-    const url = 'http://u.y.qq.com/cgi-bin/musicu.fcg';
+    const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
     const {songmid, raw} = req.query;
 
     if (!songmid) {
@@ -13,6 +13,15 @@ const song = {
     }
     const data = {
       data: JSON.stringify({
+        comm: {
+          cv: 4747474,
+          ct: 24,
+          format: 'json',
+          inCharset: 'utf-8',
+          outCharset: 'utf-8',
+          uin: req.cookies.uin || '0',
+          g_tk: 5381,
+        },
         songinfo: {
           method: 'get_song_detail_yqq',
           module: 'music.pf_song_detail_svr',
@@ -23,10 +32,24 @@ const song = {
       }),
     };
 
-    const result = await request({url, data});
+    const result = await request({
+      url,
+      data,
+      headers: {
+        referer: 'https://y.qq.com/',
+        origin: 'https://y.qq.com',
+      },
+    });
 
     if (Number(raw)) {
       return res.send(result);
+    }
+
+    if (!result?.songinfo?.data) {
+      return res.send({
+        result: 500,
+        errMsg: '获取歌曲详情失败',
+      });
     }
 
     res &&

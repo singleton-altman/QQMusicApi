@@ -1,5 +1,117 @@
 const StringHelper = require('../util/StringHelper');
 
+// 歌单写操作走新版 musicu.fcg：旧版 fcg_music_add2songdir / fcg_music_delbatchsong CGI
+// 已被 QQ 关闭（返回 403 no permit）。鉴权与 vkey 路由同一套 comm.authst(qqmusic_key)。
+const musicuComm = (cookies) => ({
+  cv: 4747474,
+  ct: 24,
+  format: 'json',
+  inCharset: 'utf-8',
+  outCharset: 'utf-8',
+  uin: cookies.uin || '0',
+  g_tk: 5381,
+  authst: cookies.qqmusic_key || cookies.qm_keyst || '',
+});
+
+const musicuRequest = (request, req, payload) => request({
+  url: 'https://u.y.qq.com/cgi-bin/musicu.fcg',
+  data: {
+    data: JSON.stringify(payload),
+  },
+  headers: {
+    referer: 'https://y.qq.com/',
+    origin: 'https://y.qq.com',
+  },
+});
+
+// PlaylistDetailWrite 只认数字 songId；兼容传入 mid 或数字 id。
+const resolveSongIds = async (request, req, { mid, id }) => {
+  const rawList = String(mid || id || '').split(',').filter(Boolean);
+  if (!rawList.length) return [];
+  const songIds = [];
+  for (const raw of rawList) {
+    if (/^\d+$/.test(raw)) {
+      songIds.push(Number(raw));
+      continue;
+    }
+    const detail = await musicuRequest(request, req, {
+      comm: musicuComm(req.cookies),
+      songinfo: {
+        module: 'music.pf_song_detail_svr',
+        method: 'get_song_detail_yqq',
+        param: {
+          song_mid: raw,
+        },
+      },
+    });
+    const songId = Number(detail?.songinfo?.data?.track_info?.id);
+    if (!songId) return null;
+    songIds.push(songId);
+  }
+  return songIds;
+};
+
+const sendWriteResult = (res, response, action) => {
+  if (!response) return;
+  const code = Number(response.code);
+  const inner = Number(response.req_1?.code);
+  if (inner === 0 && (code === 0 || Number.isNaN(code))) {
+    return res.send({
+      message: `${action}成功`,
+      result: 100,
+    });
+  }
+  const msg = response.req_1?.msg || response.msg || response.errMsg || `code ${inner || code}`;
+  if (code === 1000 || inner === 1000 || /登录|login/i.test(String(msg))) {
+    return res.send({
+      result: 301,
+      errMsg: '先登录！',
+    });
+  }
+  return res.send({
+    result: 200,
+    errMsg: `${action}出错: ${msg}`,
+  });
+};
+
+const songlistWrite = (method, action) => async ({req, res, request}) => {
+  const {mid, id, dirid = 201} = req.query;
+  if (!mid && !id) {
+    return res.send({
+      result: 500,
+      errMsg: 'mid ? id ?',
+    });
+  }
+  req.query.ownCookie = 1;
+  let songIds;
+  try {
+    songIds = await resolveSongIds(request, req, {mid, id});
+  } catch (e) {
+    return res.send({
+      result: 200,
+      errMsg: `${action}出错: 解析歌曲失败 ${e?.message || e}`,
+    });
+  }
+  if (!songIds) {
+    return res.send({
+      result: 500,
+      errMsg: '无法解析歌曲编号',
+    });
+  }
+  const response = await musicuRequest(request, req, {
+    comm: musicuComm(req.cookies),
+    req_1: {
+      module: 'music.musicasset.PlaylistDetailWrite',
+      method,
+      param: {
+        dirId: Number(dirid) || 201,
+        v_songInfo: songIds.map((songId) => ({ songType: 0, songId })),
+      },
+    },
+  });
+  return sendWriteResult(res, response, action);
+};
+
 module.exports = {
   // 根据 id 获取歌单详情
   '/': async ({req, res, request}) => {
@@ -134,104 +246,13 @@ module.exports = {
     })
   },
 
-  // 把歌曲添加到歌单，强制使用传过来的cookie
-  '/add': async ({req, res, request}) => {
-    const {mid, dirid} = req.query;
-    if (!mid || !dirid) {
-      return res.send({
-        result: 500,
-        errMsg: 'mid ? dirid ?'
-      })
-    }
-    req.query.ownCookie = 1;
-    const result = await request({
-      url: 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_music_add2songdir.fcg?g_tk=5381',
-      method: 'get',
-      data: {
-        midlist: mid,
-        typelist: new Array(mid.split(',').length).fill(13).join(','),
-        dirid,
-        addtype: '',
-        formsender: 4,
-        r2: 0,
-        r3: 1,
-        utf8: 1,
-        g_tk: 5381,
-      }
-    }, {
-      raw: true,
-    });
+  // 把歌曲添加到歌单（红心/我喜欢 dirid=201），强制使用传过来的cookie。
+  // 走新版 musicu.fcg PlaylistDetailWrite.AddSonglist；接受 mid 或数字 id，支持逗号批量。
+  '/add': songlistWrite('AddSonglist', '添加'),
 
-    switch (Number(result.code)) {
-      case 0:
-        return res.send({
-          message: '删除成功',
-          result: 100,
-        });
-      case 1000:
-        return res.send({
-          result: 301,
-          errMsg: '先登录！'
-        });
-      default:
-        return res.send({
-          result: 200,
-          errMsg: `删除出错: ${result.msg}`,
-        })
-    }
-  },
-
-  // 从歌单中删除歌曲，强制使用传过来的cookie
-  '/remove': async ({req, res, request}) => {
-    const {id, dirid} = req.query;
-    if (!id || !dirid) {
-      return res.send({
-        result: 500,
-        errMsg: 'id ? dirid ?'
-      })
-    }
-    req.query.ownCookie = 1;
-    const result = await request({
-      url: 'https://c.y.qq.com/qzone/fcg-bin/fcg_music_delbatchsong.fcg?g_tk=5381',
-      data: {
-        loginUin: req.cookies.uin,
-        hostUin: 0,
-        format: 'json',
-        inCharset: 'utf8',
-        outCharset: 'utf-8',
-        notice: 0,
-        platform: 'yqq.post',
-        needNewCode: 0,
-        uin: req.cookies.uin,
-        dirid,
-        ids: id,
-        source: 103,
-        types: new Array(id.split(',').length).fill(3).join(','),
-        formsender: 4,
-        flag: 2,
-        utf8: 1,
-        from: 3,
-      }
-    });
-
-    switch (Number(result.code)) {
-      case 0:
-        return res.send({
-          message: '删除成功',
-          result: 100,
-        });
-      case 1000:
-        return res.send({
-          result: 301,
-          errMsg: '先登录！'
-        });
-      default:
-        return res.send({
-          result: 200,
-          errMsg: `删除出错: ${result.msg}`,
-        })
-    }
-  },
+  // 从歌单中删除歌曲，强制使用传过来的cookie。
+  // 走新版 musicu.fcg PlaylistDetailWrite.DelSonglist；接受 mid 或数字 id，支持逗号批量。
+  '/remove': songlistWrite('DelSonglist', '删除'),
 
   // 新建歌单 强制使用传过来的cookie
   '/create': async ({req, res, request}) => {
